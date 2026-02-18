@@ -1,0 +1,23 @@
+﻿# Python cache
+__pycache__/
+*.pyc
+
+# Backup/temporary
+*.bak
+*.bak_*
+*~
+
+# Old archives
+archive/
+_archive_unused_*/
+
+# Generated runtime artifacts inside subprojects
+**/data/
+**/logs/
+**/ss/
+
+# Local env and machine files
+**/.env
+**/.env.*
+!.env.example
+.vscode/

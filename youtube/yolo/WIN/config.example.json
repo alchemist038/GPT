@@ -1,0 +1,28 @@
+﻿{
+  "base_dir": "E:\\masaos_mov",
+  "event_queue": "D:\\OBS\\REC\\scripts\\youtube\\yolo\\WIN\\data\\event_queue_yolo_win.jsonl",
+  "deferred_queue": "D:\\OBS\\REC\\scripts\\youtube\\yolo\\WIN\\data\\deferred_queue_yolo_win.jsonl",
+  "rejected_queue": "D:\\OBS\\REC\\scripts\\youtube\\yolo\\WIN\\data\\rejected_queue_yolo_win.jsonl",
+  "upload_queue": "D:\\OBS\\REC\\scripts\\youtube\\yolo\\WIN\\data\\upload_queue_yolo_win.jsonl",
+  "raw_video_name": "raw.mkv",
+  "raw_yolo_name": "raw_yolo.jsonl",
+  "candidates_name": "candidates_20s.jsonl",
+  "bgm_path": "D:\\OBS\\REC\\bgm\\bgm_V1.mp3",
+  "fontfile": "C:\\Windows\\Fonts\\meiryo.ttc",
+  "ffmpeg": "ffmpeg",
+  "python": "python",
+  "api_script": "D:\\OBS\\REC\\scripts\\core\\api_decision_pipeline.py",
+  "api_env_file": "D:\\OBS\\REC\\scripts\\youtube\\yolo\\WIN\\.env.win",
+  "api_key_env_name": "OPENAI_API_KEY",
+  "api2_prompt_file": "D:\\OBS\\REC\\prompts\\api2_system_yolo.txt",
+  "out_w": 720,
+  "out_h": 1280,
+  "render_duration_sec": 20,
+  "publish_pitch_hours": 3.0,
+  "route": "yolo_win",
+  "telop": {
+    "top1": "AI自動切り抜きショート",
+    "top2": "詳しくは説明欄へ",
+    "bottom3": "チャンネル登録してね\\n見たいと思った時に\\nライブでリアルなまさおが見れるかも"
+  }
+}
