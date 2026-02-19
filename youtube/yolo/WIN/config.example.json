@@ -1,4 +1,4 @@
-﻿{
+{
   "base_dir": "E:\\masaos_mov",
   "event_queue": "D:\\OBS\\REC\\scripts\\youtube\\yolo\\WIN\\data\\event_queue_yolo_win.jsonl",
   "deferred_queue": "D:\\OBS\\REC\\scripts\\youtube\\yolo\\WIN\\data\\deferred_queue_yolo_win.jsonl",
@@ -8,7 +8,7 @@
   "raw_yolo_name": "raw_yolo.jsonl",
   "candidates_name": "candidates_20s.jsonl",
   "bgm_path": "D:\\OBS\\REC\\bgm\\bgm_V1.mp3",
-  "logo_png": "C:\\Users\\<USERNAME>\\Downloads\\masao_logo_overlay.png",
+  "logo_png": ".\\assets\\logo\\masao_logo_overlay.png",
   "fontfile": "C:\\Windows\\Fonts\\meiryo.ttc",
   "ffmpeg": "ffmpeg",
   "python": "python",

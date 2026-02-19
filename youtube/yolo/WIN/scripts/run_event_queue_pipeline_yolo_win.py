@@ -235,14 +235,19 @@ def build_vf(conf: Dict[str, Any], crop_x: int) -> str:
     return ",".join(filters)
 
 
-def resolve_logo_png(conf: Dict[str, Any]) -> str | None:
-    logo_path = str(conf.get("logo_png", "")).strip()
-    if not logo_path:
+def resolve_logo_png(conf: Dict[str, Any], config_dir: Path) -> str | None:
+    logo_raw = str(conf.get("logo_png", "")).strip()
+    if not logo_raw:
         return None
-    if not os.path.isfile(logo_path):
+
+    logo_path = Path(logo_raw)
+    if not logo_path.is_absolute():
+        logo_path = (config_dir / logo_path).resolve()
+
+    if not logo_path.is_file():
         log(f"[WARN] logo file not found: {logo_path} (skip logo overlay)")
         return None
-    return logo_path
+    return str(logo_path)
 
 
 def build_logo_overlay_filter_complex(vf_main: str) -> str:
@@ -255,11 +260,11 @@ def build_logo_overlay_filter_complex(vf_main: str) -> str:
     )
 
 
-def render_video(conf: Dict[str, Any], raw_path: Path, out_path: Path, start_abs: int, dur: int, crop_x_360: int) -> bool:
+def render_video(conf: Dict[str, Any], raw_path: Path, out_path: Path, start_abs: int, dur: int, crop_x_360: int, config_dir: Path) -> bool:
     ffmpeg = conf.get("ffmpeg", "ffmpeg")
     bgm_path = conf.get("bgm_path")
     crop_x = crop_x_360 * 3
-    logo_path = resolve_logo_png(conf)
+    logo_path = resolve_logo_png(conf, config_dir)
     vf_main = build_vf(conf, crop_x)
     cmd = [
         ffmpeg,
@@ -501,7 +506,7 @@ def main() -> None:
                 continue
 
             out_mp4.parent.mkdir(parents=True, exist_ok=True)
-            if not render_video(conf, raw_video, out_mp4, start_abs, duration, crop_x_360):
+            if not render_video(conf, raw_video, out_mp4, start_abs, duration, crop_x_360, Path(args.config).resolve().parent):
                 log("[ERROR] render failed")
                 retry_items.append(item)
                 continue
