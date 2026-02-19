@@ -8,6 +8,7 @@
   "raw_yolo_name": "raw_yolo.jsonl",
   "candidates_name": "candidates_20s.jsonl",
   "bgm_path": "D:\\OBS\\REC\\bgm\\bgm_V1.mp3",
+  "logo_png": "C:\\Users\\<USERNAME>\\Downloads\\masao_logo_overlay.png",
   "fontfile": "C:\\Windows\\Fonts\\meiryo.ttc",
   "ffmpeg": "ffmpeg",
   "python": "python",

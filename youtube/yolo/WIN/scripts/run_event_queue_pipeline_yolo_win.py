@@ -235,11 +235,32 @@ def build_vf(conf: Dict[str, Any], crop_x: int) -> str:
     return ",".join(filters)
 
 
+def resolve_logo_png(conf: Dict[str, Any]) -> str | None:
+    logo_path = str(conf.get("logo_png", "")).strip()
+    if not logo_path:
+        return None
+    if not os.path.isfile(logo_path):
+        log(f"[WARN] logo file not found: {logo_path} (skip logo overlay)")
+        return None
+    return logo_path
+
+
+def build_logo_overlay_filter_complex(vf_main: str) -> str:
+    # 0-1s: visible, 1-2s: fade out, 2s+: hidden.
+    return (
+        f"[0:v]{vf_main}[vmain];"
+        "[1:v]format=rgba,loop=loop=-1:size=1:start=0,trim=duration=2,setpts=N/(30*TB),fade=t=out:st=1:d=1:alpha=1[logo_faded];"
+        "[logo_faded][vmain]scale2ref=w=main_w*0.70:h=ow/mdar[logo][vref];"
+        "[vref][logo]overlay=x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2:format=auto:enable='lt(t,2)'[vout]"
+    )
+
+
 def render_video(conf: Dict[str, Any], raw_path: Path, out_path: Path, start_abs: int, dur: int, crop_x_360: int) -> bool:
     ffmpeg = conf.get("ffmpeg", "ffmpeg")
     bgm_path = conf.get("bgm_path")
     crop_x = crop_x_360 * 3
-
+    logo_path = resolve_logo_png(conf)
+    vf_main = build_vf(conf, crop_x)
     cmd = [
         ffmpeg,
         "-y",
@@ -250,16 +271,38 @@ def render_video(conf: Dict[str, Any], raw_path: Path, out_path: Path, start_abs
         str(dur),
         "-i",
         str(raw_path),
+    ]
+
+    if logo_path:
+        cmd += ["-i", logo_path]
+
+    cmd += [
         "-stream_loop",
         "-1",
         "-i",
         str(bgm_path),
-        "-vf",
-        build_vf(conf, crop_x),
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
+    ]
+
+    if logo_path:
+        cmd += [
+            "-filter_complex",
+            build_logo_overlay_filter_complex(vf_main),
+            "-map",
+            "[vout]",
+        ]
+    else:
+        cmd += [
+            "-vf",
+            vf_main,
+            "-map",
+            "0:v:0",
+        ]
+
+    if logo_path:
+        cmd += ["-map", "2:a:0"]
+    else:
+        cmd += ["-map", "1:a:0"]
+    cmd += [
         "-c:v",
         "libx264",
         "-crf",
@@ -277,7 +320,14 @@ def render_video(conf: Dict[str, Any], raw_path: Path, out_path: Path, start_abs
         "-shortest",
         str(out_path),
     ]
-    return run_cmd(cmd, timeout=2400)
+    ok = run_cmd(cmd, timeout=2400)
+    if not ok:
+        fail_flag = out_path.parent / ".render_fail_logo"
+        try:
+            fail_flag.touch()
+        except Exception as e:
+            log(f"[FAIL FLAG ERROR] {fail_flag}: {e}")
+    return ok
 
 
 def parse_action(args_action: str) -> str:
@@ -483,5 +533,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
