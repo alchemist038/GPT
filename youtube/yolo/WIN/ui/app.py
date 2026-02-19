@@ -6,15 +6,17 @@ import os
 import queue
 import subprocess
 import threading
+from datetime import datetime, timedelta, timezone
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
-from typing import Callable
+from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 DEFAULT_CONFIG = ROOT / "config.json"
 DEFAULT_API_ENV = ROOT / ".env.win"
+JST = timezone(timedelta(hours=9))
 
 
 class App(tk.Tk):
@@ -35,6 +37,11 @@ class App(tk.Tk):
         self.review_before_api = tk.BooleanVar(value=True)
         self.review_action = tk.StringVar(value="prompt")
         self.picked_folder = tk.StringVar(value="")
+
+        self.manual_min_motion = tk.StringVar(value="40")
+        self.manual_min_hits = tk.StringVar(value="18")
+        self.manual_limit = tk.StringVar(value="300")
+        self.manual_candidates: list[dict[str, Any]] = []
 
         self.api_env_file = tk.StringVar(value=str(DEFAULT_API_ENV))
         self.api_key_env_name = tk.StringVar(value="OPENAI_API_KEY")
@@ -112,10 +119,32 @@ class App(tk.Tk):
         picked_box.columnconfigure(0, weight=1)
         row += 1
 
-        self.log_text = tk.Text(frm, wrap="word", height=24)
+        manual_box = ttk.LabelFrame(frm, text="Manual Candidate Select (Pick from list to queue)")
+        manual_box.grid(row=row, column=0, columnspan=4, sticky="nsew", pady=8)
+
+        ttk.Label(manual_box, text="min motion").grid(row=0, column=0, padx=6, pady=4, sticky="w")
+        ttk.Entry(manual_box, textvariable=self.manual_min_motion, width=8).grid(row=0, column=1, sticky="w")
+        ttk.Label(manual_box, text="min hits").grid(row=0, column=2, padx=6, pady=4, sticky="w")
+        ttk.Entry(manual_box, textvariable=self.manual_min_hits, width=8).grid(row=0, column=3, sticky="w")
+        ttk.Label(manual_box, text="max rows").grid(row=0, column=4, padx=6, pady=4, sticky="w")
+        ttk.Entry(manual_box, textvariable=self.manual_limit, width=8).grid(row=0, column=5, sticky="w")
+        ttk.Button(manual_box, text="Load Candidates", command=self.load_manual_candidates).grid(row=0, column=6, padx=6)
+        ttk.Button(manual_box, text="Enqueue Selected", command=self.enqueue_selected_candidates).grid(row=0, column=7, padx=6)
+
+        self.manual_listbox = tk.Listbox(manual_box, selectmode=tk.EXTENDED, height=10)
+        self.manual_listbox.grid(row=1, column=0, columnspan=8, padx=6, pady=(4, 6), sticky="nsew")
+        sb = ttk.Scrollbar(manual_box, orient="vertical", command=self.manual_listbox.yview)
+        sb.grid(row=1, column=8, sticky="ns", pady=(4, 6))
+        self.manual_listbox.configure(yscrollcommand=sb.set)
+        manual_box.columnconfigure(7, weight=1)
+        manual_box.rowconfigure(1, weight=1)
+        row += 1
+
+        self.log_text = tk.Text(frm, wrap="word", height=20)
         self.log_text.grid(row=row, column=0, columnspan=4, sticky="nsew")
 
         frm.columnconfigure(1, weight=1)
+        frm.rowconfigure(row - 1, weight=1)
         frm.rowconfigure(row, weight=1)
 
     def _pick_config(self) -> None:
@@ -311,6 +340,179 @@ class App(tk.Tk):
                 event_dirs.append(ev)
         event_dirs = list(dict.fromkeys(event_dirs))
         self._set_picked_folders(event_dirs)
+
+
+    def _collect_manual_candidates(self) -> list[dict[str, Any]]:
+        conf = self._read_config()
+        if not conf:
+            return []
+
+        base_dir_raw = self.base_dir.get().strip() or str(conf.get("base_dir", ""))
+        if not base_dir_raw:
+            self._log("[WARN] base_dir is empty")
+            return []
+
+        base_dir = Path(base_dir_raw)
+        if not base_dir.exists():
+            self._log(f"[WARN] base_dir not found: {base_dir}")
+            return []
+
+        candidates_name = str(conf.get("candidates_name", "candidates_20s.jsonl"))
+
+        try:
+            min_motion = float(self.manual_min_motion.get().strip() or "-1e9")
+            min_hits = float(self.manual_min_hits.get().strip() or "-1e9")
+            limit = int(self.manual_limit.get().strip() or "300")
+        except ValueError:
+            self._log("[WARN] Invalid manual candidate filter values")
+            return []
+
+        out: list[dict[str, Any]] = []
+        for cand_path in base_dir.rglob(candidates_name):
+            try:
+                with cand_path.open("r", encoding="utf-8") as f:
+                    for idx, raw in enumerate(f):
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        try:
+                            row = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        if row.get("picked_at"):
+                            continue
+                        if row.get("video_id"):
+                            continue
+                        if "start_abs" not in row or "end_abs" not in row:
+                            continue
+
+                        motion = float(row.get("motion", -1.0))
+                        hits = float(row.get("hits", -1.0))
+                        if motion < min_motion or hits < min_hits:
+                            continue
+
+                        row2 = dict(row)
+                        row2["_source_path"] = str(cand_path)
+                        row2["_source_index"] = idx
+                        row2["_session_dir"] = str(cand_path.parent)
+                        out.append(row2)
+            except OSError as e:
+                self._log(f"[WARN] candidate read failed: {cand_path} ({e})")
+
+        out.sort(key=lambda r: (float(r.get("motion", -1.0)), float(r.get("hits", -1.0))), reverse=True)
+        if limit > 0:
+            out = out[:limit]
+        return out
+
+    def load_manual_candidates(self) -> None:
+        self.manual_candidates = self._collect_manual_candidates()
+        self.manual_listbox.delete(0, tk.END)
+
+        for row in self.manual_candidates:
+            s = int(row.get("start_abs", 0))
+            e = int(row.get("end_abs", 0))
+            ev = f"{s:05d}_{e:05d}"
+            motion = float(row.get("motion", -1.0))
+            hits = float(row.get("hits", -1.0))
+            sess = Path(str(row.get("_session_dir", ""))).name
+            self.manual_listbox.insert(tk.END, f"{ev} | motion={motion:.3f} | hits={hits:.0f} | session={sess}")
+
+        self._log(f"[OK] manual candidates loaded: {len(self.manual_candidates)}")
+
+    def _parse_publish_start_jst(self) -> datetime:
+        raw = self._normalize_start(self.publish_start.get())
+        if not raw:
+            return datetime.now(JST).replace(microsecond=0) + timedelta(minutes=5)
+
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            self._log(f"[WARN] invalid publish start; fallback now+5m: {raw}")
+            return datetime.now(JST).replace(microsecond=0) + timedelta(minutes=5)
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=JST)
+        else:
+            dt = dt.astimezone(JST)
+        return dt
+
+    def enqueue_selected_candidates(self) -> None:
+        sel = list(self.manual_listbox.curselection())
+        if not sel:
+            self._log("[INFO] select candidates first")
+            return
+
+        conf = self._read_config()
+        if not conf:
+            return
+
+        q = self._event_queue_path()
+        if q is None:
+            return
+
+        try:
+            pitch_raw = self.publish_pitch_hours.get().strip()
+            pitch_hours = float(pitch_raw) if pitch_raw else float(conf.get("publish_pitch_hours", 3.0))
+        except ValueError:
+            self._log("[WARN] invalid publish pitch hours")
+            return
+
+        start_dt = self._parse_publish_start_jst()
+        route = str(conf.get("route", "yolo_win"))
+
+        selected_rows = [self.manual_candidates[i] for i in sel]
+        picked_at = datetime.now(JST).replace(microsecond=0).isoformat()
+        pick_id = picked_at.replace(":", "").replace("-", "")
+
+        by_file: dict[str, list[int]] = {}
+        for row in selected_rows:
+            src = str(row.get("_source_path", ""))
+            idx = int(row.get("_source_index", -1))
+            if src and idx >= 0:
+                by_file.setdefault(src, []).append(idx)
+
+        for src, idxs in by_file.items():
+            p2 = Path(src)
+            try:
+                src_rows = []
+                with p2.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            src_rows.append(json.loads(line))
+                for idx in idxs:
+                    if 0 <= idx < len(src_rows):
+                        src_rows[idx]["picked_at"] = picked_at
+                        src_rows[idx]["pick_id"] = pick_id
+                p2.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in src_rows), encoding="utf-8")
+            except Exception as e:
+                self._log(f"[WARN] pick mark failed: {p2} ({e})")
+
+        q.parent.mkdir(parents=True, exist_ok=True)
+        with q.open("a", encoding="utf-8") as f:
+            for i, row in enumerate(selected_rows):
+                s = int(row.get("start_abs", 0))
+                e = int(row.get("end_abs", 0))
+                event_name = f"{s:05d}_{e:05d}"
+                session_dir = Path(str(row.get("_session_dir", "")))
+                event_dir = session_dir / "events" / event_name
+                publish_at = (start_dt + timedelta(hours=i * pitch_hours)).isoformat()
+                out_row = {
+                    "session_dir": str(session_dir),
+                    "event_name": event_name,
+                    "event_dir": str(event_dir),
+                    "frames_dir": str(event_dir / "images_cropped"),
+                    "publishAt": publish_at,
+                    "route": route,
+                    "motion": row.get("motion"),
+                    "hits": row.get("hits"),
+                    "pick_reason": "manual_list_select",
+                }
+                f.write(json.dumps(out_row, ensure_ascii=False) + "\n")
+                self._log(f"[QUEUE] {event_name} motion={float(row.get('motion', -1.0)):.3f} hits={float(row.get('hits', -1.0)):.0f} publishAt={publish_at}")
+
+        self._log(f"[OK] selected candidates enqueued: {len(selected_rows)}")
 
     def run_build(self) -> None:
         cmd = [
