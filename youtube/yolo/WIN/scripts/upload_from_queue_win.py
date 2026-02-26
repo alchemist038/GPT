@@ -19,6 +19,12 @@ from common_win import load_config, read_jsonl, write_jsonl_atomic
 JST = timezone(timedelta(hours=9))
 DEFAULT_PLAYLIST_ID = "PLvSj66EpFnyfn0tMREkXv33zjDn1edic-"
 DEFAULT_TOKEN_PATH = r"D:\OBS\REC\keys\youtube\token.json"
+GORO_BLOCK = (
+    "プロジェクトメンバーのGPT五郎です。\n"
+    "まさお専用に再学習したYOLOでライブ配信をフレーム単位解析し、動き量を数値化して自動選定した20秒です。\n"
+    "アルゴリズムはまだ調整中なので、良かった点や気になる所があればぜひコメントで教えてください。"
+)
+HASHTAGS = "#まさお #うさぎ #ミニレッキス #AI切り抜き #YOLO #自動編集 #ライブ配信 #shorts"
 
 
 def now_jst_iso() -> str:
@@ -38,6 +44,49 @@ def load_creds(token_path: Path) -> Credentials:
     return creds
 
 
+def parse_session_start_from_path(any_path_under_session: Path) -> Optional[datetime]:
+    for part in any_path_under_session.parts:
+        if len(part) != 19:
+            continue
+        if not (part[4] == "-" and part[7] == "-" and part[10] == "_" and part[13] == "-" and part[16] == "-"):
+            continue
+        try:
+            return datetime.strptime(part, "%Y-%m-%d_%H-%M-%S").replace(tzinfo=JST)
+        except Exception:
+            return None
+    return None
+
+
+def parse_event_abs_seconds(event_name: str) -> Optional[Tuple[int, int]]:
+    try:
+        a, b = event_name.split("_", 1)
+        return int(a), int(b)
+    except Exception:
+        return None
+
+
+def build_time_line(video_path: Path, decision_path: Path) -> str:
+    event_name: Optional[str] = None
+    parts = list(decision_path.parts)
+    for i, part in enumerate(parts):
+        if part.lower() == "events" and i + 1 < len(parts):
+            event_name = parts[i + 1]
+            break
+
+    sess_start = parse_session_start_from_path(decision_path) or parse_session_start_from_path(video_path)
+    if (event_name is None) or (sess_start is None):
+        return ""
+
+    sec_pair = parse_event_abs_seconds(event_name)
+    if sec_pair is None:
+        return ""
+
+    s0, s1 = sec_pair
+    center = (s0 + s1) // 2
+    t = sess_start + timedelta(seconds=center)
+    return f"{t.strftime('%Y年%m月%d日 %H:%M')}頃 ライブ配信中の一場面です"
+
+
 
 def normalize_publish_at_rfc3339(raw: str) -> str:
     dt = datetime.fromisoformat(raw)
@@ -46,6 +95,8 @@ def normalize_publish_at_rfc3339(raw: str) -> str:
     else:
         dt = dt.astimezone(JST)
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def upload_video(youtube, video_path: Path, title: str, description: str, publish_at_rfc3339: str) -> str:
     body = {
         "snippet": {
@@ -78,12 +129,18 @@ def add_to_playlist(youtube, video_id: str, playlist_id: str) -> None:
     youtube.playlistItems().insert(part="snippet", body=body).execute()
 
 
-def build_description(decision: Dict[str, Any]) -> str:
-    desc = str(decision.get("description") or "").strip()
-    tags = "#まさお #うさぎ #rabbit #bunny #shorts"
+def build_description(decision: Dict[str, Any], video_path: Path, decision_path: Path) -> str:
+    desc = str(decision.get("description") or "").rstrip()
+    time_line = build_time_line(video_path, decision_path)
+
+    blocks: List[str] = []
     if desc:
-        return f"{desc}\n\n{tags}"
-    return tags
+        blocks.append(desc)
+    if time_line:
+        blocks.append(time_line)
+    blocks.append(GORO_BLOCK)
+    blocks.append(HASHTAGS)
+    return "\n\n".join(blocks)
 
 
 def dequeue_items(queue_path: Path, max_n: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -150,7 +207,7 @@ def main() -> None:
 
         decision = load_json(decision_path)
         title = str(decision.get("title") or "まさおのワンシーン").strip()
-        description = build_description(decision)
+        description = build_description(decision, video_path, decision_path)
 
         if args.dry_run:
             print(f"[DRY] title={title}")
